@@ -10,17 +10,22 @@ import "encoding/binary"
 //
 //	SS = KMAC256(K=sharedSecret, X=AlgorithmID||SuppPubInfo, L=ssLen*8, S="")
 //
+// AlgorithmID is encoded per RFC 7518 Section 4.6.2 as a length-prefixed
+// octet string: a big-endian 32-bit byte length followed by the raw
+// bytes of the algorithm identifier. SuppPubInfo is the desired key
+// length in bits, encoded as a big-endian 32-bit unsigned integer.
+//
 // alg is the algorithm identifier string — for direct mode, the "enc"
 // (content encryption) algorithm; for key-wrap mode, the "alg" (key
 // encryption) algorithm. ssLen is the desired output length in bytes.
 func deriveKey(sharedSecret []byte, alg string, ssLen int) []byte {
 	algBytes := []byte(alg)
-	var suppPubInfo [4]byte
-	binary.BigEndian.PutUint32(suppPubInfo[:], uint32(ssLen)*8)
 
-	x := make([]byte, len(algBytes)+4)
-	copy(x, algBytes)
-	copy(x[len(algBytes):], suppPubInfo[:])
+	// X = be32(len(alg)) || alg || be32(ssLen*8)
+	x := make([]byte, 4+len(algBytes)+4)
+	binary.BigEndian.PutUint32(x[0:4], uint32(len(algBytes)))
+	copy(x[4:], algBytes)
+	binary.BigEndian.PutUint32(x[4+len(algBytes):], uint32(ssLen)*8)
 
 	return kmac256(sharedSecret, x, ssLen, "")
 }
