@@ -18,6 +18,11 @@
 // encryption algorithms, JWK key import/export for the standard library
 // ML-KEM key types, and JWE encrypt/decrypt dispatch via the jwebb extension
 // hook.
+//
+// Registration happens in init(). If any underlying jwx Register* call
+// returns an error, init() panics — importing this package will crash the
+// program at load time. This is the house style across all jwx-go extension
+// modules.
 package mlkem
 
 import (
@@ -117,19 +122,19 @@ func cekSize(calg string) (int, error) {
 }
 
 func init() {
-	jwa.RegisterKeyEncryptionAlgorithm(MLKEM768(), MLKEM1024(), MLKEM768A192KW(), MLKEM1024A256KW())
+	panicOnRegistrationError(jwa.RegisterKeyEncryptionAlgorithm(MLKEM768(), MLKEM1024(), MLKEM768A192KW(), MLKEM1024A256KW()))
 
 	for _, alg := range allAlgs() {
-		jwebb.RegisterMLKEMAlgorithm(alg)
+		panicOnRegistrationError(jwebb.RegisterMLKEMAlgorithm(alg))
 	}
 	for _, alg := range directAlgs() {
-		jwebb.RegisterMLKEMDirectAlgorithm(alg)
+		panicOnRegistrationError(jwebb.RegisterMLKEMDirectAlgorithm(alg))
 	}
 
-	jwk.RegisterKeyImporter(importEncapsulationKey768)
-	jwk.RegisterKeyImporter(importEncapsulationKey1024)
-	jwk.RegisterKeyImporter(importDecapsulationKey768)
-	jwk.RegisterKeyImporter(importDecapsulationKey1024)
+	panicOnRegistrationError(jwk.RegisterKeyImporter(importEncapsulationKey768))
+	panicOnRegistrationError(jwk.RegisterKeyImporter(importEncapsulationKey1024))
+	panicOnRegistrationError(jwk.RegisterKeyImporter(importDecapsulationKey768))
+	panicOnRegistrationError(jwk.RegisterKeyImporter(importDecapsulationKey1024))
 
 	// Register a per-algorithm exporter for every ML-KEM AKP variant.
 	// jwx v4's AKP key returns KeyKind "AKP:<alg>", and the alg string
@@ -137,7 +142,18 @@ func init() {
 	// (the JWK only describes the key, not the wrap mode), so we register
 	// the bare names plus the +KW names defensively.
 	for _, alg := range []string{algMLKEM768, algMLKEM1024, algMLKEM768A192KW, algMLKEM1024A256} {
-		jwk.RegisterKeyExporter(jwk.KeyKind("AKP:"+alg), jwk.KeyExportFunc(exportMLKEMKey))
+		panicOnRegistrationError(jwk.RegisterKeyExporter(jwk.KeyKind("AKP:"+alg), jwk.KeyExportFunc(exportMLKEMKey)))
+	}
+}
+
+// panicOnRegistrationError converts a non-nil error returned by a jwx
+// Register* call during init() into an import-time panic. The rule
+// (documented in jwx's internals.md) is that a failed Register* leaves
+// the extension unusable, so we surface it immediately instead of
+// letting the program continue in a broken state.
+func panicOnRegistrationError(err error) {
+	if err != nil {
+		panic(fmt.Sprintf("jwx-go/mlkem: registration failed: %s", err))
 	}
 }
 
