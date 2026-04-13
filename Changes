@@ -1,7 +1,7 @@
 Changes
 =======
 
-UNRELEASED
+v4.0.0-alpha1 13 Apr 2026
   * Initial version, ML-KEM (FIPS 203) support for github.com/lestrrat-go/jwx/v4.
     Implements draft-ietf-jose-pqc-kem (ML-KEM-768, ML-KEM-1024,
     ML-KEM-768+A192KW, ML-KEM-1024+A256KW) for JWE key encryption.
