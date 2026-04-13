@@ -1,6 +1,14 @@
 Changes
 =======
 
+v4.0.0-alpha2 UNRELEASED
+  * [Security] deriveKey now constructs the KDF input X with a 4-byte
+    big-endian length prefix on AlgorithmID per RFC 7518 Section 4.6.2:
+    X = be32(len(alg)) || alg || be32(ssLen*8). The previous version
+    omitted the length prefix, producing locally-consistent but
+    spec-incompatible KDF output. Any existing message produced by
+    v4.0.0-alpha1 cannot be decrypted by v4.0.0-alpha2 and vice versa.
+
 v4.0.0-alpha1 13 Apr 2026
   * Initial version, ML-KEM (FIPS 203) support for github.com/lestrrat-go/jwx/v4.
     Implements draft-ietf-jose-pqc-kem (ML-KEM-768, ML-KEM-1024,
