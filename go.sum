@@ -1,10 +1,7 @@
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/lestrrat-go/dsig v1.1.0 h1:FF7ApqV/r5IQoRdd6LDev/ctP8uz7eIvoGw+ZZvry/8=
-github.com/lestrrat-go/dsig v1.1.0/go.mod h1:dEgoOYYEJvW6XGbLasr8TFcAxoWrKlbQvmJgCR0qkDo=
 github.com/lestrrat-go/dsig v1.3.0 h1:phjMOCXvYzhuIgn7Voe2rex8z166vGfxRxmqM25P9/Q=
-github.com/lestrrat-go/jwx/v4 v4.0.0-scratch.15 h1:YsYjBly5y9YzI345vk5dCzUZVBoZHzh0MlCsKyvrIbU=
-github.com/lestrrat-go/jwx/v4 v4.0.0-scratch.15/go.mod h1:SUc9pObPthy49nmAwo88XmQuf0lemWNrC3ijqMtRvy0=
+github.com/lestrrat-go/dsig v1.3.0/go.mod h1:RD2eOaidyPvpc7IJQoO3Qq52RWdy8ZcJs8lrOnoa1Kc=
 github.com/lestrrat-go/jwx/v4 v4.0.0-scratch.17.0.20260413225300-c0aa9026c40e h1:R0CVfKDuGGxHL1Nq9HBKetG4FStQ729DjWY0RnCHUts=
 github.com/lestrrat-go/jwx/v4 v4.0.0-scratch.17.0.20260413225300-c0aa9026c40e/go.mod h1:IlbSfVeg2o2oa43Rnn0lXClSXh+xQHwVFATC7lbE6oU=
 github.com/lestrrat-go/option/v3 v3.0.0-alpha1 h1:dvdzLwm/Ba5CJUF3jQP7w/iNYSLfy7yyh9XXNa1WjxI=
