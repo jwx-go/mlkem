@@ -170,6 +170,82 @@ func TestMLKEM(t *testing.T) {
 	})
 }
 
+// TestExportWithKWAlg pins the +KW KeyKind exporter registrations in
+// mlkem.go's init(). A JWK whose "alg" field is "ML-KEM-768+A192KW" (or
+// "ML-KEM-1024+A256KW") produces KeyKind "AKP:ML-KEM-768+A192KW" (or
+// "AKP:ML-KEM-1024+A256KW") via jwk/akp.go akpKeyKind, so jwk.Export
+// dispatches to the +KW registrations — not the bare-name ones. This
+// test fails with an unregistered-KeyKind error if those entries are
+// dropped from the registration loop.
+func TestExportWithKWAlg(t *testing.T) {
+	testcases := []struct {
+		name    string
+		alg     jwa.KeyEncryptionAlgorithm
+		genDK   func() (any, error)
+		exportT func(jwk.Key) error
+	}{
+		{
+			name:  "ML-KEM-768+A192KW",
+			alg:   jwxmlkem.MLKEM768A192KW(),
+			genDK: func() (any, error) { return mlkem.GenerateKey768() },
+			exportT: func(k jwk.Key) error {
+				_, err := jwk.Export[*mlkem.DecapsulationKey768](k)
+				return err
+			},
+		},
+		{
+			name:  "ML-KEM-1024+A256KW",
+			alg:   jwxmlkem.MLKEM1024A256KW(),
+			genDK: func() (any, error) { return mlkem.GenerateKey1024() },
+			exportT: func(k jwk.Key) error {
+				_, err := jwk.Export[*mlkem.DecapsulationKey1024](k)
+				return err
+			},
+		},
+	}
+
+	payload := []byte("Hello, post-quantum world!")
+
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := tc.genDK()
+			require.NoError(t, err)
+
+			jkey, err := jwk.Import[jwk.Key](raw)
+			require.NoError(t, err)
+
+			// Rewrite alg to the +KW variant so KeyKind becomes
+			// "AKP:<tc.name>" and export dispatches to the +KW
+			// exporter registration.
+			require.NoError(t, jkey.Set(jwk.AlgorithmKey, tc.alg.String()))
+
+			require.NoError(t, tc.exportT(jkey), "export to stdlib key type should succeed via +KW KeyKind")
+
+			dec, err := jwk.Export[jwebb.MLKEMKeyDecrypter](jkey)
+			require.NoError(t, err, "export to MLKEMKeyDecrypter should succeed via +KW KeyKind")
+			require.NotNil(t, dec)
+
+			enc, err := jwk.Export[jwebb.MLKEMKeyEncrypter](jkey)
+			require.NoError(t, err, "export to MLKEMKeyEncrypter should succeed via +KW KeyKind")
+			require.NotNil(t, enc)
+
+			// End-to-end: encrypt/decrypt through the JWK.
+			pubJWK, err := jkey.PublicKey()
+			require.NoError(t, err)
+
+			encrypted, err := jwe.Encrypt(payload,
+				jwe.WithKey(tc.alg, pubJWK),
+				jwe.WithContentEncryption(jwa.A256GCM()),
+			)
+			require.NoError(t, err)
+
+			decrypted, err := jwe.Decrypt(encrypted, jwe.WithKey(tc.alg, jkey))
+			require.NoError(t, err)
+			require.Equal(t, payload, decrypted)
+		})
+	}
+}
+
 func TestAlgVariantMismatch(t *testing.T) {
 	dk, err := mlkem.GenerateKey768()
 	require.NoError(t, err)
