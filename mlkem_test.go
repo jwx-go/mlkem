@@ -7,6 +7,7 @@ import (
 	jwxmlkem "github.com/jwx-go/mlkem/v4"
 	"github.com/lestrrat-go/jwx/v4/jwa"
 	"github.com/lestrrat-go/jwx/v4/jwe"
+	"github.com/lestrrat-go/jwx/v4/jwe/jwebb"
 	"github.com/lestrrat-go/jwx/v4/jwk"
 	"github.com/stretchr/testify/require"
 )
@@ -166,5 +167,46 @@ func TestMLKEM(t *testing.T) {
 		decrypted, err := jwe.Decrypt(encrypted, jwe.WithKey(jwxmlkem.MLKEM768(), jkey))
 		require.NoError(t, err)
 		require.Equal(t, payload, decrypted)
+	})
+}
+
+func TestAlgVariantMismatch(t *testing.T) {
+	dk, err := mlkem.GenerateKey768()
+	require.NoError(t, err)
+
+	jkey, err := jwk.Import[jwk.Key](dk)
+	require.NoError(t, err)
+
+	enc, err := jwk.Export[jwebb.MLKEMKeyEncrypter](jkey)
+	require.NoError(t, err)
+	dec, err := jwk.Export[jwebb.MLKEMKeyDecrypter](jkey)
+	require.NoError(t, err)
+
+	cek := make([]byte, 32)
+
+	t.Run("EncryptMLKEM rejects mismatched alg", func(t *testing.T) {
+		_, _, err := enc.EncryptMLKEM(cek, "ML-KEM-1024", "A256GCM")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "ML-KEM-1024")
+		require.Contains(t, err.Error(), "ML-KEM-768")
+	})
+
+	t.Run("EncryptMLKEM rejects mismatched +KW alg", func(t *testing.T) {
+		_, _, err := enc.EncryptMLKEM(cek, "ML-KEM-1024+A256KW", "A256GCM")
+		require.Error(t, err)
+	})
+
+	t.Run("DecryptMLKEM rejects mismatched alg", func(t *testing.T) {
+		_, err := dec.DecryptMLKEM(nil, "ML-KEM-1024", "A256GCM", nil)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "ML-KEM-1024")
+		require.Contains(t, err.Error(), "ML-KEM-768")
+	})
+
+	t.Run("matching alg still succeeds", func(t *testing.T) {
+		sealed, kemCT, err := enc.EncryptMLKEM(cek, "ML-KEM-768", "A256GCM")
+		require.NoError(t, err)
+		_, err = dec.DecryptMLKEM(sealed, "ML-KEM-768", "A256GCM", kemCT)
+		require.NoError(t, err)
 	})
 }

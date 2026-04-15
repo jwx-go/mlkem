@@ -26,6 +26,9 @@ var (
 
 // EncryptMLKEM implements jwebb.MLKEMKeyEncrypter.
 func (k *mlkemKey) EncryptMLKEM(cek []byte, alg, calg string) ([]byte, []byte, error) {
+	if want := bareAlg(alg); k.alg != "" && want != k.alg {
+		return nil, nil, fmt.Errorf(`mlkem: alg %q does not match key variant %q`, alg, k.alg)
+	}
 	sharedSecret, ciphertext, err := k.encapsulate()
 	if err != nil {
 		return nil, nil, err
