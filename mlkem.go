@@ -189,6 +189,15 @@ func importPublic(pub []byte, alg string) (jwk.Key, error) {
 	return key, nil
 }
 
+// importPrivate builds an AKP jwk.Key from a pub/priv byte pair. It is only
+// reachable from importDecapsulationKey768/1024 above, both of which pass
+// raw.EncapsulationKey().Bytes() for pub — i.e. the public key derived from
+// the same stdlib *mlkem.DecapsulationKey that produced priv. The pub/priv
+// consistency check therefore lives one layer up in newDecapsulation768/1024
+// (called from the exporter on the way back out). A JSON-parsed JWK with a
+// mismatched pub never flows through this function: jwx core unmarshals AKP
+// keys directly into a jwk.Key without calling our per-package importers,
+// and the inconsistency is caught at export time instead.
 func importPrivate(pub, priv []byte, alg string) (jwk.Key, error) {
 	key, err := jwkunsafe.NewKey(jwa.AKP())
 	if err != nil {
