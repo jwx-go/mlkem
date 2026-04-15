@@ -112,6 +112,17 @@ tampered ciphertexts and does not change decapsulation of valid ones — but
 JWK round-trips do not preserve bitwise key identity. If the draft is revised
 to accommodate the full 64-byte seed, this limitation will be removed.
 
+**KDF binary format.** The KMAC256 KDF input `X` follows
+draft-ietf-jose-pqc-kem-05 §5.1, which defines `AlgorithmID` and
+`SuppPubInfo` per RFC 7518 §4.6.2 — a length-prefixed octet string for the
+algorithm identifier and a big-endian 32-bit key-length-in-bits field. The
+draft is still an Internet-Draft and ships no KAT vectors, and as of this
+release no second JOSE implementation of the draft exists to cross-validate
+against. Treat wire-level KDF interop with other implementations as
+provisional until such vectors or an interoperating peer become available;
+any future draft revision that tightens this encoding will break wire
+compatibility with messages produced by earlier versions of this module.
+
 ## License
 
 MIT
