@@ -31,6 +31,13 @@ Import this package to register ML-KEM algorithms with jwx:
 import _ "github.com/jwx-go/mlkem/v4"
 ```
 
+> **Note:** Registration happens in `init()` and will **panic** if any of
+> the ML-KEM algorithms, key importers, or exporters fail to register (for
+> example, if another module has already claimed the same identifier).
+> This is intentional: a half-registered extension would silently produce
+> "algorithm not found" errors at encrypt or decrypt time, so the failure
+> is raised at program start instead.
+
 This registers:
 
 - **Key encryption algorithms**: ML-KEM-768, ML-KEM-1024, ML-KEM-768+A192KW, ML-KEM-1024+A256KW
