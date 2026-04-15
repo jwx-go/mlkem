@@ -10,6 +10,9 @@ import (
 
 // DecryptMLKEM implements jwebb.MLKEMKeyDecrypter.
 func (k *mlkemKey) DecryptMLKEM(sealedCEK []byte, alg, calg string, enc []byte) ([]byte, error) {
+	if want := bareAlg(alg); k.alg != "" && want != k.alg {
+		return nil, fmt.Errorf(`mlkem: alg %q does not match key variant %q`, alg, k.alg)
+	}
 	sharedSecret, err := k.decapsulate(enc)
 	if err != nil {
 		return nil, err
