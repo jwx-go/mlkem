@@ -137,10 +137,22 @@ func init() {
 	panicOnRegistrationError(jwk.RegisterKeyImporter(importDecapsulationKey1024))
 
 	// Register a per-algorithm exporter for every ML-KEM AKP variant.
-	// jwx v4's AKP key returns KeyKind "AKP:<alg>", and the alg string
-	// stored on the JWK uses the bare KEM name even for the +KW variants
-	// (the JWK only describes the key, not the wrap mode), so we register
-	// the bare names plus the +KW names defensively.
+	// jwx v4's AKP KeyKind at export time is "AKP:" + the "alg" field
+	// currently stored on the JWK (see jwk/akp.go akpKeyKind), so which
+	// of the four KeyKinds a key lands on depends on how it was built:
+	//
+	//   - Keys imported from a stdlib *mlkem.{Encap,Decap}sulationKey*
+	//     via our importers above store the bare KEM name and land on
+	//     "AKP:ML-KEM-768" or "AKP:ML-KEM-1024".
+	//   - Keys produced by unmarshalling a JSON JWK (jwk.Parse) or by
+	//     rewriting the alg via key.Set carry whatever alg the caller
+	//     chose. Per draft-ietf-jose-pqc-kem that may legitimately be a
+	//     +KW variant, and such keys land on "AKP:ML-KEM-768+A192KW" or
+	//     "AKP:ML-KEM-1024+A256KW".
+	//
+	// All four KeyKinds are therefore real exporter targets and must be
+	// registered. The +KW pair is pinned by TestExportWithKWAlg in
+	// mlkem_test.go so a future refactor cannot delete them silently.
 	for _, alg := range []string{algMLKEM768, algMLKEM1024, algMLKEM768A192KW, algMLKEM1024A256} {
 		panicOnRegistrationError(jwk.RegisterKeyExporter(jwk.KeyKind("AKP:"+alg), jwk.KeyExportFunc(exportMLKEMKey)))
 	}
