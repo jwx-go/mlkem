@@ -37,7 +37,7 @@ AKP field semantics are algorithm-specific: "The parameters for public and priva
 information classes contain byte strings in a format specified by the `alg` value"
 ([draft-ietf-cose-dilithium, Section 3](https://datatracker.ietf.org/doc/html/draft-ietf-cose-dilithium)).
 
-### Private Key Seed Size: 32-byte `priv` + 32-byte `z` Extension
+### Private Key Seed Size: 32-byte `priv`, `z` Regenerated on Import
 
 > **This is a critical design decision. Read this section carefully.**
 
@@ -95,37 +95,49 @@ so there is no interop baseline to check against.
 
 #### Our decision
 
-**Store 32 bytes in `"priv"` (the `d` component) per the draft, and add a private
-extension field `"z"` (32 bytes) for the implicit rejection seed.**
+**Store 32 bytes in `"priv"` (the `d` component) per the draft. Do not persist
+`z`. On every reconstruction of a `DecapsulationKey`, generate a fresh random
+`z` via `crypto/rand` and pass `d || z` to `mlkem.NewDecapsulationKey*`.**
 
 Behavior:
 
-| Scenario | `priv` | `z` | On import |
-|---|---|---|---|
-| Full key (our export) | 32 bytes (`d`) | 32 bytes (`z`) | Reconstruct `DecapsulationKey` from `d \|\| z` |
-| Spec-only key (other impl) | 32 bytes (`d`) | absent | Generate fresh random `z`, reconstruct from `d \|\| z` |
-| Public key only | absent | absent | Construct `EncapsulationKey` from `pub` |
+| Scenario | `priv` | On import |
+|---|---|---|
+| Private key | 32 bytes (`d`) | Generate fresh random `z`, reconstruct from `d \|\| z` |
+| Public key only | absent | Construct `EncapsulationKey` from `pub` |
 
 Rationale:
 
 1. **Spec compliance**: `"priv"` contains exactly 32 bytes, satisfying the draft's MUST.
-2. **Lossless round-trip**: When `"z"` is present, the full key is preserved across
-   serialization. Keys exported by jwx can be re-imported without loss.
-3. **Interop**: JWKs from other implementations (without `"z"`) are accepted. A fresh
-   random `z` is equally valid for implicit rejection — it just changes which value
-   gets returned on invalid ciphertext, not the behavior on valid ciphertext.
-4. **Security**: Implicit rejection is preserved either way. `z` does not affect the
-   encapsulation key or valid decapsulation — it only determines the fake shared secret
-   returned on tampered ciphertexts.
-5. **Future-proof**: If the draft is corrected to 64 bytes in a future revision, we
-   can migrate by concatenating `priv || z` into a single 64-byte `priv` field.
+2. **Security is preserved**: `z` only determines the pseudo-random shared secret
+   returned on implicit rejection of tampered ciphertexts. It does not affect the
+   encapsulation key, valid decapsulation, or any wire value. The FIPS 203 property
+   that tampered ciphertexts yield an indistinguishable-from-random secret holds
+   as long as `z` is cryptographically random — which a fresh `crypto/rand` draw is.
+3. **No schema extension**: We do not invent a private `"z"` JWK field. Keeping the
+   AKP schema minimal avoids pinning jwx to a non-standard extension that would
+   have to be maintained forever if the draft later lands on a different solution.
+4. **Future-proof**: If the draft is corrected to 64 bytes in a future revision, we
+   migrate by making `priv` a 64-byte `d || z` field; no extension field to retire.
 
-The `"z"` field:
-- JSON key: `"z"`
-- Value: base64url-encoded 32 bytes
-- MUST NOT be present without `"priv"`
-- SHOULD be included when exporting private keys
-- If absent on import, a fresh 32-byte random value is generated via `crypto/rand`
+**Round-trip consequence (interoperability limitation):**
+
+`jwk.Import(dk) → jwk.Export[*mlkem.DecapsulationKey768]` does **not** return
+the same 64 bytes as `dk.Bytes()` — the `z` half is regenerated. Two
+decapsulators reconstructed from the same JWK across different processes (or
+across restarts of the same process) will return different pseudo-random
+secrets when handed the *same* tampered ciphertext. Any application that uses
+`Decapsulate(tampered)` output as a stable value — e.g. as an HKDF salt, a
+monitoring channel tag, or an audit-log fingerprint — will see nondeterministic
+results. Applications that fingerprint keys by hashing the stdlib seed will
+likewise see unstable IDs across re-imports; use `pub` (the encapsulation key)
+for stable key identity instead.
+
+This limitation is also documented in:
+- `README.md` §"Interoperability note"
+- The `AKPPrivateKey` godoc in the core jwx `jwk` package (see the
+  "INTEROPERABILITY WARNING: ML-KEM PRIVATE KEY ROUND-TRIP LIMITATION" block,
+  added in lestrrat-go/jwx#1707)
 
 ## Spec: JWE Header Parameter
 
@@ -282,11 +294,6 @@ Add to `key_types` in genjwk `objects.yml`:
         - name: priv
           type: "[]byte"
           required: true
-        - name: z
-          type: "[]byte"
-          comment: |
-            ML-KEM implicit rejection seed. See "Private Key Seed Size"
-            in docs/design/v4-mlkem.md for rationale.
         - name: alg
           type: jwa.KeyAlgorithm
           required: true
@@ -299,17 +306,17 @@ Then run `make generate-jwk` and `make generate-jwa`.
 Import dispatch follows the OKP pattern (`jwk/okp.go`):
 - Register typed importers via `RegisterKeyImporter` for `*mlkem.EncapsulationKey768`,
   `*mlkem.DecapsulationKey768`, `*mlkem.EncapsulationKey1024`, `*mlkem.DecapsulationKey1024`
-- The `Import()` method type-switches on the raw key to set `pub`, `priv`, `z`, and `alg`
+- The `Import()` method type-switches on the raw key to set `pub`, `priv`, and `alg`
 - For `*mlkem.DecapsulationKey768`: `seed := dk.Bytes()` → `priv = seed[:32]` (`d`),
-  `z = seed[32:]` (`z`), `pub = dk.EncapsulationKey().Bytes()`
-- For `*mlkem.EncapsulationKey768`: `pub = ek.Bytes()`, no `priv`/`z`
+  `pub = dk.EncapsulationKey().Bytes()`. The `z` half of the seed is discarded —
+  see "Private Key Seed Size" above
+- For `*mlkem.EncapsulationKey768`: `pub = ek.Bytes()`, no `priv`
 
 Export dispatch follows the OKP `KeyKind` pattern:
 - `KeyKind()` returns `"AKP:ML-KEM-768"` or `"AKP:ML-KEM-1024"` based on the `alg` field
   (analogous to OKP using `"OKP:Ed25519"` / `"OKP:X25519"` based on `crv`)
-- Private key export: if `z` is present, `seed = priv || z` (64 bytes), call
-  `mlkem.NewDecapsulationKey768(seed)`; if `z` is absent, generate 32 random bytes for `z`,
-  then construct as above
+- Private key export: generate 32 random bytes for `z` via `crypto/rand`,
+  build `seed = priv || z` (64 bytes), then call `mlkem.NewDecapsulationKey768(seed)`
 - Public key export: call `mlkem.NewEncapsulationKey768(pub)`
 
 ### Task 3: Add `"ek"` header field to JWE headers
@@ -546,16 +553,14 @@ critical first step.
 
 1. **Round-trip tests**: Encrypt with each ML-KEM alg, decrypt, verify plaintext matches
 2. **Cross-parameter tests**: Verify ML-KEM-768 keys cannot be used with ML-KEM-1024 alg (and vice versa)
-3. **JWK serialization**: Marshal/unmarshal ML-KEM keys, verify `"kty": "AKP"`, `"pub"`, `"priv"`, `"z"` fields
-4. **JWK without `z`**: Import a JWK with only `"priv"` (no `"z"`), verify decapsulation works (fresh `z` generated)
-5. **JWK round-trip with `z`**: Export → import → export, verify `priv` and `z` are preserved
-6. **Key import/export**: `jwk.Import(*mlkem.DecapsulationKey768)` → JWK → `jwk.Export[*mlkem.DecapsulationKey768]` → verify keys match
-7. **Header `"ek"` field**: Verify KEM ciphertext appears in serialized JWE, round-trips correctly
-8. **Direct mode**: Verify JWE Encrypted Key is absent in compact serialization for `ML-KEM-768` / `ML-KEM-1024`
-9. **Key-wrap mode**: Verify JWE Encrypted Key is present for `ML-KEM-768+A192KW` / `ML-KEM-1024+A256KW`
-10. **Algorithm-key mismatch**: Verify errors when wrong key type is provided
-11. **KMAC256 test vectors**: Validate KMAC256 implementation against NIST SP 800-185 test vectors
-12. **Interop vectors**: Once available from other implementations or the draft, add test vectors
+3. **JWK serialization**: Marshal/unmarshal ML-KEM keys, verify `"kty": "AKP"`, `"pub"`, `"priv"` fields (no `"z"` — see "Private Key Seed Size")
+4. **Key import/export**: `jwk.Import(*mlkem.DecapsulationKey768)` → JWK → `jwk.Export[*mlkem.DecapsulationKey768]` → verify the encapsulation key matches (the 64-byte seed intentionally does not, because `z` is regenerated)
+5. **Header `"ek"` field**: Verify KEM ciphertext appears in serialized JWE, round-trips correctly
+6. **Direct mode**: Verify JWE Encrypted Key is absent in compact serialization for `ML-KEM-768` / `ML-KEM-1024`
+7. **Key-wrap mode**: Verify JWE Encrypted Key is present for `ML-KEM-768+A192KW` / `ML-KEM-1024+A256KW`
+8. **Algorithm-key mismatch**: Verify errors when wrong key type is provided
+9. **KMAC256 test vectors**: Validate KMAC256 implementation against NIST SP 800-185 test vectors
+10. **Interop vectors**: Once available from other implementations or the draft, add test vectors
 
 ## Task Ordering
 
