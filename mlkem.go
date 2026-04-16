@@ -47,10 +47,10 @@ import (
 )
 
 const (
-	algMLKEM768       = "ML-KEM-768"
-	algMLKEM1024      = "ML-KEM-1024"
-	algMLKEM768A192KW = "ML-KEM-768+A192KW"
-	algMLKEM1024A256  = "ML-KEM-1024+A256KW"
+	algMLKEM768        = "ML-KEM-768"
+	algMLKEM1024       = "ML-KEM-1024"
+	algMLKEM768A192KW  = "ML-KEM-768+A192KW"
+	algMLKEM1024A256KW = "ML-KEM-1024+A256KW"
 
 	zFieldName          = "z"
 	legacyZDerivePrefix = "jwx-go/mlkem z-derivation/"
@@ -73,11 +73,11 @@ func MLKEM768A192KW() jwa.KeyEncryptionAlgorithm {
 
 // MLKEM1024A256KW returns the ML-KEM-1024 + AES-256 key wrap algorithm.
 func MLKEM1024A256KW() jwa.KeyEncryptionAlgorithm {
-	return jwa.NewKeyEncryptionAlgorithm(algMLKEM1024A256)
+	return jwa.NewKeyEncryptionAlgorithm(algMLKEM1024A256KW)
 }
 
 func allAlgs() []string {
-	return []string{algMLKEM768, algMLKEM1024, algMLKEM768A192KW, algMLKEM1024A256}
+	return []string{algMLKEM768, algMLKEM1024, algMLKEM768A192KW, algMLKEM1024A256KW}
 }
 
 func directAlgs() []string {
@@ -107,7 +107,7 @@ func derivedKeySize(alg, calg string) (int, error) {
 	switch alg {
 	case algMLKEM768A192KW:
 		return 24, nil
-	case algMLKEM1024A256:
+	case algMLKEM1024A256KW:
 		return 32, nil
 	default:
 		return 0, fmt.Errorf(`mlkem: unsupported algorithm %q`, alg)
@@ -166,7 +166,7 @@ func init() {
 	// All four KeyKinds are therefore real exporter targets and must be
 	// registered. The +KW pair is pinned by TestExportWithKWAlg in
 	// mlkem_test.go so a future refactor cannot delete them silently.
-	for _, alg := range []string{algMLKEM768, algMLKEM1024, algMLKEM768A192KW, algMLKEM1024A256} {
+	for _, alg := range []string{algMLKEM768, algMLKEM1024, algMLKEM768A192KW, algMLKEM1024A256KW} {
 		panicOnRegistrationError(jwk.RegisterKeyExporter(jwk.KeyKind("AKP:"+alg), jwk.KeyExportFunc(exportMLKEMKey)))
 	}
 }
@@ -259,7 +259,7 @@ func exportMLKEMKey(key jwk.Key, hint any) (any, error) {
 	alg := algV.String()
 
 	switch alg {
-	case algMLKEM768, algMLKEM1024, algMLKEM768A192KW, algMLKEM1024A256:
+	case algMLKEM768, algMLKEM1024, algMLKEM768A192KW, algMLKEM1024A256KW:
 	default:
 		return nil, jwk.ContinueError()
 	}
@@ -350,7 +350,7 @@ func bareAlg(alg string) string {
 	switch alg {
 	case algMLKEM768, algMLKEM768A192KW:
 		return algMLKEM768
-	case algMLKEM1024, algMLKEM1024A256:
+	case algMLKEM1024, algMLKEM1024A256KW:
 		return algMLKEM1024
 	}
 	return alg
