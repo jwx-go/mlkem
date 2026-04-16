@@ -273,16 +273,13 @@ func exportMLKEMKey(key jwk.Key, hint any) (any, error) {
 		return nil, fmt.Errorf(`mlkem export: "pub" field is not []byte`)
 	}
 
-	var err error
-	var priv []byte
-	hasPriv := false
-	if priv, hasPriv, err = keyFieldBytes(key, jwk.AKPPrivKey); err != nil {
+	priv, hasPriv, err := keyFieldBytes(key, jwk.AKPPrivKey)
+	if err != nil {
 		return nil, err
 	}
 
-	var z []byte
-	hasZ := false
-	if z, hasZ, err = keyFieldBytes(key, zFieldName); err != nil {
+	z, hasZ, err := keyFieldBytes(key, zFieldName)
+	if err != nil {
 		return nil, err
 	}
 	if hasZ && !hasPriv {
