@@ -105,12 +105,18 @@ KMAC256 (NIST SP 800-185).
 
 `draft-ietf-jose-pqc-kem` defines the AKP `priv` field as 32 bytes (the `d`
 seed component) but Go's `crypto/mlkem` requires the full 64-byte `d || z`
-seed. When a private key is exported to JWK, the `z` component is discarded;
-on re-import a fresh random `z` is generated. This produces a functionally
-equivalent key for normal operations — `z` only affects implicit rejection of
-tampered ciphertexts and does not change decapsulation of valid ones — but
-JWK round-trips do not preserve bitwise key identity. If the draft is revised
-to accommodate the full 64-byte seed, this limitation will be removed.
+seed. To preserve exact stdlib key identity, this module stores `d` in `priv`
+and the 32-byte implicit-rejection value in a companion-private `z` field.
+Private JWK round-trips emitted by this module therefore preserve the full
+64-byte seed exactly, while `PublicKey()` drops `z` so public AKP JWKs do not
+leak it.
+
+Legacy ML-KEM JWKs that only carry `priv` remain supported. When such a key is
+re-imported, this module derives a deterministic fallback `z` from `d` and the
+ML-KEM parameter set so reconstructed keys remain stable across processes and
+restarts. Those legacy round-trips preserve the public key and decapsulation of
+valid ciphertexts, but they cannot recover the original random `z` unless the
+JWK already stored it.
 
 **KDF binary format.** The KMAC256 KDF input `X` follows
 draft-ietf-jose-pqc-kem-05 §5.1, which defines `AlgorithmID` and

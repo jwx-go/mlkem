@@ -2,6 +2,7 @@ package mlkem_test
 
 import (
 	"crypto/mlkem"
+	"encoding/json"
 	"testing"
 
 	jwxmlkem "github.com/jwx-go/mlkem/v4"
@@ -140,6 +141,7 @@ func TestMLKEM(t *testing.T) {
 	t.Run("JWK round-trip via jwk.Import / jwk.Export", func(t *testing.T) {
 		dk, err := mlkem.GenerateKey768()
 		require.NoError(t, err)
+		seed := dk.Bytes()
 
 		jkey, err := jwk.Import[jwk.Key](dk)
 		require.NoError(t, err)
@@ -148,14 +150,19 @@ func TestMLKEM(t *testing.T) {
 		alg, ok := jkey.Algorithm()
 		require.True(t, ok)
 		require.Equal(t, "ML-KEM-768", alg.String())
+		z, ok := jkey.Field("z")
+		require.True(t, ok)
+		require.Equal(t, seed[32:], z)
 
 		// Round-trip back to a raw decapsulation key.
 		exported, err := jwk.Export[*mlkem.DecapsulationKey768](jkey)
 		require.NoError(t, err)
+		require.Equal(t, seed, exported.Bytes())
 		require.Equal(t, dk.EncapsulationKey().Bytes(), exported.EncapsulationKey().Bytes())
 
 		pubJWK, err := jkey.PublicKey()
 		require.NoError(t, err)
+		require.False(t, pubJWK.Has("z"))
 
 		// Encrypt with public JWK, decrypt with private JWK.
 		encrypted, err := jwe.Encrypt(payload,
@@ -168,6 +175,32 @@ func TestMLKEM(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, payload, decrypted)
 	})
+}
+
+func TestLegacyJWKWithoutZUsesDeterministicFallback(t *testing.T) {
+	dk, err := mlkem.GenerateKey768()
+	require.NoError(t, err)
+
+	jkey, err := jwk.Import[jwk.Key](dk)
+	require.NoError(t, err)
+	require.NoError(t, jkey.Remove("z"))
+
+	buf, err := json.Marshal(jkey)
+	require.NoError(t, err)
+
+	parsed1, err := jwk.ParseKey[jwk.Key](buf)
+	require.NoError(t, err)
+	parsed2, err := jwk.ParseKey[jwk.Key](buf)
+	require.NoError(t, err)
+
+	exported1, err := jwk.Export[*mlkem.DecapsulationKey768](parsed1)
+	require.NoError(t, err)
+	exported2, err := jwk.Export[*mlkem.DecapsulationKey768](parsed2)
+	require.NoError(t, err)
+
+	require.Equal(t, exported1.Bytes(), exported2.Bytes())
+	require.Equal(t, dk.Bytes()[:32], exported1.Bytes()[:32])
+	require.Equal(t, dk.EncapsulationKey().Bytes(), exported1.EncapsulationKey().Bytes())
 }
 
 // TestExportWithKWAlg pins the +KW KeyKind exporter registrations in
@@ -284,5 +317,30 @@ func TestAlgVariantMismatch(t *testing.T) {
 		require.NoError(t, err)
 		_, err = dec.DecryptMLKEM(sealed, "ML-KEM-768", "A256GCM", kemCT)
 		require.NoError(t, err)
+	})
+}
+
+func TestMalformedZFieldRejected(t *testing.T) {
+	dk, err := mlkem.GenerateKey768()
+	require.NoError(t, err)
+
+	t.Run("wrong type", func(t *testing.T) {
+		jkey, err := jwk.Import[jwk.Key](dk)
+		require.NoError(t, err)
+		require.NoError(t, jkey.Set("z", "not-bytes"))
+
+		_, err = jwk.Export[*mlkem.DecapsulationKey768](jkey)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), `"z" field is not []byte`)
+	})
+
+	t.Run("wrong length", func(t *testing.T) {
+		jkey, err := jwk.Import[jwk.Key](dk)
+		require.NoError(t, err)
+		require.NoError(t, jkey.Set("z", []byte("short")))
+
+		_, err = jwk.Export[*mlkem.DecapsulationKey768](jkey)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), `"z" field must be 32 bytes`)
 	})
 }
