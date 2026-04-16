@@ -47,6 +47,11 @@ Follows draft-ietf-jose-pqc-kem (a refinement of draft-ietf-cose-dilithium):
 - `alg`: `"ML-KEM-768"` / `"ML-KEM-1024"` / `"ML-KEM-768+A192KW"` / `"ML-KEM-1024+A256KW"` (REQUIRED)
 - `pub`: base64url-encoded encapsulation key bytes (REQUIRED)
 - `priv`: base64url-encoded 32-byte `d` seed (private keys only)
+- `z`: base64url-encoded 32-byte implicit-rejection value (private keys only, companion-private extension)
+
+Private JWKs emitted by this module carry both `priv` and `z` so stdlib
+`*mlkem.DecapsulationKey*` values round-trip exactly. Legacy JWKs without `z`
+still import; export derives deterministic fallback `z` from `priv` + bare alg.
 
 ### Registration Points
 

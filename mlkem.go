@@ -23,12 +23,21 @@
 // returns an error, init() panics — importing this package will crash the
 // program at load time. This is the house style across all jwx-go extension
 // modules.
+//
+// Private ML-KEM JWKs store the 32-byte `d` seed in `priv`. This module also
+// preserves the 32-byte implicit-rejection value in a companion-private `z`
+// field so JWK round-trips can reconstruct the exact stdlib key. Legacy ML-KEM
+// JWKs that only carry `priv` remain supported: on export, a deterministic `z`
+// is derived from `d` and the ML-KEM parameter set.
 package mlkem
 
 import (
 	"bytes"
+	"crypto/hkdf"
 	"crypto/mlkem"
-	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 
 	"github.com/lestrrat-go/jwx/v4/jwa"
@@ -42,6 +51,9 @@ const (
 	algMLKEM1024      = "ML-KEM-1024"
 	algMLKEM768A192KW = "ML-KEM-768+A192KW"
 	algMLKEM1024A256  = "ML-KEM-1024+A256KW"
+
+	zFieldName          = "z"
+	legacyZDerivePrefix = "jwx-go/mlkem z-derivation/"
 )
 
 // MLKEM768 returns the ML-KEM-768 key encryption algorithm (direct mode).
@@ -131,6 +143,7 @@ func init() {
 		panicOnRegistrationError(jwebb.RegisterMLKEMDirectAlgorithm(alg))
 	}
 
+	panicOnRegistrationError(jwk.RegisterCustomDecoder(zFieldName, jwk.CustomDecodeFunc[[]byte](decodeBase64Bytes)))
 	panicOnRegistrationError(jwk.RegisterKeyImporter(importEncapsulationKey768))
 	panicOnRegistrationError(jwk.RegisterKeyImporter(importEncapsulationKey1024))
 	panicOnRegistrationError(jwk.RegisterKeyImporter(importDecapsulationKey768))
@@ -179,12 +192,12 @@ func importEncapsulationKey1024(raw *mlkem.EncapsulationKey1024) (jwk.Key, error
 
 func importDecapsulationKey768(raw *mlkem.DecapsulationKey768) (jwk.Key, error) {
 	seed := raw.Bytes() // 64-byte d || z
-	return importPrivate(raw.EncapsulationKey().Bytes(), seed[:32], algMLKEM768)
+	return importPrivate(raw.EncapsulationKey().Bytes(), seed[:32], seed[32:], algMLKEM768)
 }
 
 func importDecapsulationKey1024(raw *mlkem.DecapsulationKey1024) (jwk.Key, error) {
 	seed := raw.Bytes()
-	return importPrivate(raw.EncapsulationKey().Bytes(), seed[:32], algMLKEM1024)
+	return importPrivate(raw.EncapsulationKey().Bytes(), seed[:32], seed[32:], algMLKEM1024)
 }
 
 func importPublic(pub []byte, alg string) (jwk.Key, error) {
@@ -201,7 +214,7 @@ func importPublic(pub []byte, alg string) (jwk.Key, error) {
 	return key, nil
 }
 
-// importPrivate builds an AKP jwk.Key from a pub/priv byte pair. It is only
+// importPrivate builds an AKP jwk.Key from a pub/priv/z byte triple. It is only
 // reachable from importDecapsulationKey768/1024 above, both of which pass
 // raw.EncapsulationKey().Bytes() for pub — i.e. the public key derived from
 // the same stdlib *mlkem.DecapsulationKey that produced priv. The pub/priv
@@ -210,7 +223,7 @@ func importPublic(pub []byte, alg string) (jwk.Key, error) {
 // mismatched pub never flows through this function: jwx core unmarshals AKP
 // keys directly into a jwk.Key without calling our per-package importers,
 // and the inconsistency is caught at export time instead.
-func importPrivate(pub, priv []byte, alg string) (jwk.Key, error) {
+func importPrivate(pub, priv, z []byte, alg string) (jwk.Key, error) {
 	key, err := jwkunsafe.NewKey(jwa.AKP())
 	if err != nil {
 		return nil, fmt.Errorf(`mlkem import: %w`, err)
@@ -222,6 +235,9 @@ func importPrivate(pub, priv []byte, alg string) (jwk.Key, error) {
 		return nil, fmt.Errorf(`mlkem import: %w`, err)
 	}
 	if err := key.Set(jwk.AKPPrivKey, priv); err != nil {
+		return nil, fmt.Errorf(`mlkem import: %w`, err)
+	}
+	if err := key.Set(zFieldName, z); err != nil {
 		return nil, fmt.Errorf(`mlkem import: %w`, err)
 	}
 	return key, nil
@@ -257,13 +273,20 @@ func exportMLKEMKey(key jwk.Key, hint any) (any, error) {
 		return nil, fmt.Errorf(`mlkem export: "pub" field is not []byte`)
 	}
 
-	var priv []byte
-	if privV, hasPriv := key.Field(jwk.AKPPrivKey); hasPriv {
-		pb, ok := privV.([]byte)
-		if !ok {
-			return nil, fmt.Errorf(`mlkem export: "priv" field is not []byte`)
-		}
-		priv = pb
+	priv, hasPriv, err := keyFieldBytes(key, jwk.AKPPrivKey)
+	if err != nil {
+		return nil, err
+	}
+
+	z, hasZ, err := keyFieldBytes(key, zFieldName)
+	if err != nil {
+		return nil, err
+	}
+	if hasZ && !hasPriv {
+		return nil, fmt.Errorf(`mlkem export: %q field requires %q field`, zFieldName, jwk.AKPPrivKey)
+	}
+	if hasZ && len(z) != 32 {
+		return nil, fmt.Errorf(`mlkem export: %q field must be 32 bytes, got %d`, zFieldName, len(z))
 	}
 
 	switch hint.(type) {
@@ -272,13 +295,13 @@ func exportMLKEMKey(key jwk.Key, hint any) (any, error) {
 	case *mlkem.EncapsulationKey1024:
 		return mlkem.NewEncapsulationKey1024(pub)
 	case *mlkem.DecapsulationKey768:
-		dk, err := newDecapsulation768(pub, priv)
+		dk, err := newDecapsulation768(pub, priv, z)
 		if err != nil {
 			return nil, err
 		}
 		return dk, nil
 	case *mlkem.DecapsulationKey1024:
-		dk, err := newDecapsulation1024(pub, priv)
+		dk, err := newDecapsulation1024(pub, priv, z)
 		if err != nil {
 			return nil, err
 		}
@@ -297,7 +320,7 @@ func exportMLKEMKey(key jwk.Key, hint any) (any, error) {
 		}
 		wrapper.encap = ek
 		if priv != nil {
-			dk, err := newDecapsulation768(pub, priv)
+			dk, err := newDecapsulation768(pub, priv, z)
 			if err != nil {
 				return nil, err
 			}
@@ -310,7 +333,7 @@ func exportMLKEMKey(key jwk.Key, hint any) (any, error) {
 		}
 		wrapper.encap = ek
 		if priv != nil {
-			dk, err := newDecapsulation1024(pub, priv)
+			dk, err := newDecapsulation1024(pub, priv, z)
 			if err != nil {
 				return nil, err
 			}
@@ -333,18 +356,75 @@ func bareAlg(alg string) string {
 	return alg
 }
 
-// newDecapsulation768 reconstructs an ML-KEM-768 decapsulation key from a
-// 32-byte d seed plus the expected encapsulation key bytes for round-trip
-// verification. A fresh random z is generated for implicit rejection (see
-// the interoperability note in the package doc / README).
-func newDecapsulation768(pub, priv []byte) (*mlkem.DecapsulationKey768, error) {
-	if len(priv) != 32 {
-		return nil, fmt.Errorf(`mlkem: ML-KEM-768 priv must be 32 bytes, got %d`, len(priv))
+func decodeBase64Bytes(data []byte) ([]byte, error) {
+	var encoded string
+	if err := json.Unmarshal(data, &encoded); err != nil {
+		return nil, err
 	}
+
+	for _, enc := range []*base64.Encoding{
+		base64.RawURLEncoding,
+		base64.URLEncoding,
+		base64.RawStdEncoding,
+		base64.StdEncoding,
+	} {
+		decoded, err := enc.DecodeString(encoded)
+		if err == nil {
+			return decoded, nil
+		}
+	}
+
+	return nil, fmt.Errorf(`expected base64 encoded []byte`)
+}
+
+func keyFieldBytes(key jwk.Key, field string) ([]byte, bool, error) {
+	v, ok := key.Field(field)
+	if !ok {
+		return nil, false, nil
+	}
+	b, ok := v.([]byte)
+	if !ok {
+		return nil, true, fmt.Errorf(`mlkem export: %q field is not []byte`, field)
+	}
+	return b, true, nil
+}
+
+func deriveLegacyZ(priv []byte, alg string) ([]byte, error) {
+	z, err := hkdf.Key(sha256.New, priv, nil, legacyZDerivePrefix+alg, 32)
+	if err != nil {
+		return nil, fmt.Errorf(`mlkem: failed to derive deterministic z for legacy %s JWK: %w`, alg, err)
+	}
+	return z, nil
+}
+
+func seedForDecapsulation(priv, z []byte, alg string) ([]byte, error) {
+	if len(priv) != 32 {
+		return nil, fmt.Errorf(`mlkem: %s priv must be 32 bytes, got %d`, alg, len(priv))
+	}
+	if z == nil {
+		var err error
+		z, err = deriveLegacyZ(priv, alg)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(z) != 32 {
+		return nil, fmt.Errorf(`mlkem: %s z must be 32 bytes, got %d`, alg, len(z))
+	}
+
 	seed := make([]byte, 64)
 	copy(seed[:32], priv)
-	if _, err := rand.Read(seed[32:]); err != nil {
-		return nil, fmt.Errorf(`mlkem: failed to generate random z: %w`, err)
+	copy(seed[32:], z)
+	return seed, nil
+}
+
+// newDecapsulation768 reconstructs an ML-KEM-768 decapsulation key from the
+// stored 32-byte d seed and either the preserved `z` field or a deterministic
+// fallback for legacy JWKs that only carry `priv`.
+func newDecapsulation768(pub, priv, z []byte) (*mlkem.DecapsulationKey768, error) {
+	seed, err := seedForDecapsulation(priv, z, algMLKEM768)
+	if err != nil {
+		return nil, err
 	}
 	dk, err := mlkem.NewDecapsulationKey768(seed)
 	if err != nil {
@@ -356,14 +436,10 @@ func newDecapsulation768(pub, priv []byte) (*mlkem.DecapsulationKey768, error) {
 	return dk, nil
 }
 
-func newDecapsulation1024(pub, priv []byte) (*mlkem.DecapsulationKey1024, error) {
-	if len(priv) != 32 {
-		return nil, fmt.Errorf(`mlkem: ML-KEM-1024 priv must be 32 bytes, got %d`, len(priv))
-	}
-	seed := make([]byte, 64)
-	copy(seed[:32], priv)
-	if _, err := rand.Read(seed[32:]); err != nil {
-		return nil, fmt.Errorf(`mlkem: failed to generate random z: %w`, err)
+func newDecapsulation1024(pub, priv, z []byte) (*mlkem.DecapsulationKey1024, error) {
+	seed, err := seedForDecapsulation(priv, z, algMLKEM1024)
+	if err != nil {
+		return nil, err
 	}
 	dk, err := mlkem.NewDecapsulationKey1024(seed)
 	if err != nil {
