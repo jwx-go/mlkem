@@ -3,7 +3,7 @@ module github.com/jwx-go/mlkem/v4
 go 1.26.0
 
 require (
-	github.com/lestrrat-go/jwx/v4 v4.0.0-scratch.26.0.20260418045133-503e8a50fb86
+	github.com/lestrrat-go/jwx/v4 v4.0.0-scratch.27
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/crypto v0.50.0
 )
