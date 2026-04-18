@@ -188,9 +188,9 @@ func TestLegacyJWKWithoutZUsesDeterministicFallback(t *testing.T) {
 	buf, err := json.Marshal(jkey)
 	require.NoError(t, err)
 
-	parsed1, err := jwk.ParseKey[jwk.Key](buf)
+	parsed1, err := jwk.ParseKeyAs[jwk.Key](buf)
 	require.NoError(t, err)
-	parsed2, err := jwk.ParseKey[jwk.Key](buf)
+	parsed2, err := jwk.ParseKeyAs[jwk.Key](buf)
 	require.NoError(t, err)
 
 	exported1, err := jwk.Export[*mlkem.DecapsulationKey768](parsed1)
