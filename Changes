@@ -1,7 +1,8 @@
 Changes
 =======
 
-v4.0.0-alpha2 UNRELEASED
+v4.0.0 19 Apr 2026
+  * First stable v4 release. Tracks github.com/lestrrat-go/jwx/v4 v4.0.0.
   * [Security] deriveKey now constructs the KDF input X with a 4-byte
     big-endian length prefix on AlgorithmID per RFC 7518 Section 4.6.2:
     X = be32(len(alg)) || alg || be32(ssLen*8). The previous version
