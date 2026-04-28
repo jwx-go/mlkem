@@ -1,6 +1,9 @@
 Changes
 =======
 
+v4.0.1 28 Apr 2026
+  * CI maintenance: bump actions/cache to 5.0.5.
+
 v4.0.0 19 Apr 2026
   * First stable v4 release. Tracks github.com/lestrrat-go/jwx/v4 v4.0.0.
   * [Security] deriveKey now constructs the KDF input X with a 4-byte
