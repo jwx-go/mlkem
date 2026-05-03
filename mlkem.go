@@ -144,10 +144,10 @@ func init() {
 	}
 
 	panicOnRegistrationError(jwk.RegisterCustomDecoder(zFieldName, jwk.CustomDecodeFunc[[]byte](decodeBase64Bytes)))
-	panicOnRegistrationError(jwk.RegisterKeyImporter(importEncapsulationKey768))
-	panicOnRegistrationError(jwk.RegisterKeyImporter(importEncapsulationKey1024))
-	panicOnRegistrationError(jwk.RegisterKeyImporter(importDecapsulationKey768))
-	panicOnRegistrationError(jwk.RegisterKeyImporter(importDecapsulationKey1024))
+	panicOnRegistrationError(jwk.RegisterKeyImporter(jwk.KeyImportFunc[*mlkem.EncapsulationKey768](importEncapsulationKey768)))
+	panicOnRegistrationError(jwk.RegisterKeyImporter(jwk.KeyImportFunc[*mlkem.EncapsulationKey1024](importEncapsulationKey1024)))
+	panicOnRegistrationError(jwk.RegisterKeyImporter(jwk.KeyImportFunc[*mlkem.DecapsulationKey768](importDecapsulationKey768)))
+	panicOnRegistrationError(jwk.RegisterKeyImporter(jwk.KeyImportFunc[*mlkem.DecapsulationKey1024](importDecapsulationKey1024)))
 
 	// Register a per-algorithm exporter for every ML-KEM AKP variant.
 	// jwx v4's AKP KeyKind at export time is "AKP:" + the "alg" field
