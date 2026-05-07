@@ -1,6 +1,17 @@
 Changes
 =======
 
+v4.0.2 7 May 2026
+  * `DecryptMLKEM` rejects non-empty `encrypted_key` in direct
+    mode per draft-ietf-jose-pqc-kem; previously the bytes were
+    silently discarded. Library-produced JWEs are unaffected
+    (`encrypted_key` is already empty in direct mode), so this
+    closes a gap where a tampering proxy or non-conformant peer
+    that inserted bytes there could pass.
+  * Tighten the `z` field decoder to base64url-without-padding
+    only (RFC 7515 §2). Previously accepted standard encoding and
+    padded forms, which created JWK-acceptance ambiguity.
+
 v4.0.1 28 Apr 2026
   * CI maintenance: bump actions/cache to 5.0.5.
 
