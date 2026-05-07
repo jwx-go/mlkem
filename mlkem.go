@@ -356,25 +356,32 @@ func bareAlg(alg string) string {
 	return alg
 }
 
+// decodeBase64Bytes decodes a JSON string into its raw base64url
+// payload. The "z" field of an mlkem AKP JWK is decoded through this
+// function via jwk.RegisterCustomDecoder.
+//
+// Per RFC 7515 §2 and the JOSE convention adopted across draft-
+// ietf-jose-pqc-kem, JWK byte fields use base64url WITHOUT padding.
+// A permissive decoder that also accepts std encoding or padded
+// forms creates JWK acceptance ambiguity: two byte-distinct
+// representations of the same key both decode successfully, which
+// breaks JWK fingerprint hashing, dedup caches keyed on the JWK
+// bytes, and any downstream "compare-as-bytes-then-hash" validator.
+//
+// This module's exporter always emits raw base64url (jwx core's
+// canonical JWK encoding), and the "z" field is a companion-private
+// extension — there are no third-party producers — so tightening
+// the import path to match is safe.
 func decodeBase64Bytes(data []byte) ([]byte, error) {
 	var encoded string
 	if err := json.Unmarshal(data, &encoded); err != nil {
 		return nil, err
 	}
-
-	for _, enc := range []*base64.Encoding{
-		base64.RawURLEncoding,
-		base64.URLEncoding,
-		base64.RawStdEncoding,
-		base64.StdEncoding,
-	} {
-		decoded, err := enc.DecodeString(encoded)
-		if err == nil {
-			return decoded, nil
-		}
+	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf(`mlkem: "z" field must be base64url-encoded without padding (RFC 7515 §2): %w`, err)
 	}
-
-	return nil, fmt.Errorf(`expected base64 encoded []byte`)
+	return decoded, nil
 }
 
 func keyFieldBytes(key jwk.Key, field string) ([]byte, bool, error) {
