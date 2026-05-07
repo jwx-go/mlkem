@@ -396,6 +396,38 @@ func keyFieldBytes(key jwk.Key, field string) ([]byte, bool, error) {
 	return b, true, nil
 }
 
+// deriveLegacyZ reconstructs a 32-byte implicit-rejection value (z)
+// for an AKP JWK that lacks the companion-private "z" field. The
+// derivation is HKDF-SHA256 over the private seed, salted with the
+// jwx-go-internal legacyZDerivePrefix and the bare alg name.
+//
+// FIPS 203 specifies z as an INDEPENDENT 32-byte random value, not
+// derived from anything. There is no standardized derivation a
+// jwx-go consumer can recompute from priv alone, so this companion's
+// derivation is deliberately namespaced (the "jwx-go/mlkem
+// z-derivation/" prefix) to avoid collision with any future standard
+// scheme. Two consequences callers should be aware of:
+//
+//   - A legacy JWK (priv-only, no z) imported by another implementation
+//     reconstructs to a DIFFERENT z than this one — and therefore a
+//     DIFFERENT key for the implicit-rejection branch of decapsulation.
+//     The encap/decap pair on a well-formed ciphertext is unaffected;
+//     only the value Decapsulate returns on a MALFORMED ciphertext
+//     differs across implementations. Applications that key further
+//     state on the rejection-branch shared secret (rare, but possible
+//     in constant-time validation cascades) are non-portable for
+//     legacy JWKs.
+//
+//   - This module's exporter emits z on every export (see exportMLKEMKey
+//     in this file), so a JWK imported here, exported, then re-imported
+//     elsewhere carries the derived z and pins the value across the
+//     trip. The portability gap exists only for JWKs that arrive
+//     without z and never round-trip through this module before reaching
+//     a foreign decapsulator.
+//
+// The cleanest deployment path is to ensure private AKP JWKs carry z
+// from creation time. Legacy import is supported as a transition
+// affordance, not as the canonical shape.
 func deriveLegacyZ(priv []byte, alg string) ([]byte, error) {
 	z, err := hkdf.Key(sha256.New, priv, nil, legacyZDerivePrefix+alg, 32)
 	if err != nil {
