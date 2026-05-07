@@ -1,7 +1,9 @@
 package mlkem_test
 
 import (
+	"bytes"
 	"crypto/mlkem"
+	"encoding/base64"
 	"encoding/json"
 	"testing"
 
@@ -385,6 +387,95 @@ func TestDirectModeRejectsNonEmptyEncryptedKey(t *testing.T) {
 		recovered, err := decKW.DecryptMLKEM(sealed, "ML-KEM-768+A192KW", "A192GCM", kemCTKW)
 		require.NoError(t, err)
 		require.Equal(t, cek, recovered)
+	})
+}
+
+// TestZFieldBase64Strictness pins the contract that the "z" custom
+// decoder accepts only RFC 7515 §2 base64url-without-padding —
+// rejecting std encoding, URL-with-padding, and std-with-padding.
+//
+// The "z" field is a companion-private extension; the only producer
+// is this module's own exporter, which always emits raw base64url.
+// Accepting other forms creates JWK acceptance ambiguity (two
+// byte-distinct representations of the same key) which breaks JWK
+// fingerprint hashing and similar identity-by-bytes patterns.
+func TestZFieldBase64Strictness(t *testing.T) {
+	// Build a minimal AKP private-key JWK JSON with a known 32-byte
+	// "z" payload. The companion's exporter would emit this as raw
+	// base64url; we then swap the "z" value to other encodings and
+	// verify each is rejected.
+	dk, err := mlkem.GenerateKey768()
+	require.NoError(t, err)
+	jkey, err := jwk.Import[jwk.Key](dk)
+	require.NoError(t, err)
+
+	canonical, err := json.Marshal(jkey)
+	require.NoError(t, err)
+
+	// Extract the canonical (raw URL) encoded value of "z" from the
+	// marshaled JWK so we can build re-encoded variants of the same
+	// 32 bytes.
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(canonical, &raw))
+	rawURLZ, ok := raw["z"].(string)
+	require.True(t, ok, "z must be present and a string in the canonical JSON")
+
+	// Decode the canonical "z" back to the underlying 32 bytes.
+	zBytes, err := base64.RawURLEncoding.DecodeString(rawURLZ)
+	require.NoError(t, err, "canonical z must round-trip through RawURLEncoding")
+	require.Len(t, zBytes, 32, "z is 32 bytes per FIPS 203")
+
+	// Build a JWK JSON with a parameterized "z" encoding. We rebuild
+	// the JSON by swapping the "z" field rather than reusing
+	// canonical-with-replacement, to avoid escaping pitfalls.
+	rebuild := func(zValue string) []byte {
+		raw["z"] = zValue
+		out, mErr := json.Marshal(raw)
+		require.NoError(t, mErr)
+		return out
+	}
+
+	t.Run("RawURL encoding accepted (control)", func(t *testing.T) {
+		jsonBytes := rebuild(base64.RawURLEncoding.EncodeToString(zBytes))
+		k, err := jwk.ParseKey(jsonBytes)
+		require.NoError(t, err, "raw URL must round-trip cleanly")
+		v, ok := k.Field("z")
+		require.True(t, ok, "z must be present after parse")
+		zBack, ok := v.([]byte)
+		require.True(t, ok, "z must be []byte after custom decoder")
+		require.True(t, bytes.Equal(zBytes, zBack))
+	})
+
+	t.Run("URL with padding rejected", func(t *testing.T) {
+		jsonBytes := rebuild(base64.URLEncoding.EncodeToString(zBytes))
+		_, err := jwk.ParseKey(jsonBytes)
+		require.Error(t, err, "padded URL form must be rejected")
+		require.Contains(t, err.Error(), "base64url",
+			"error must name the spec requirement")
+	})
+
+	t.Run("RawStd encoding rejected", func(t *testing.T) {
+		// Use a value whose std and URL encodings differ — bytes that
+		// produce '+' or '/' in std vs '-' or '_' in url. The
+		// generated z is random; if it happens to use only the shared
+		// alphabet, std and URL encodings coincide and the decoder
+		// can't distinguish. Force a differing payload by setting one
+		// known byte that lifts to '+' or '/' under std.
+		differing := append([]byte{}, zBytes...)
+		differing[0] = 0xfb // 0xfb__... begins with '+' under StdEncoding
+		jsonBytes := rebuild(base64.RawStdEncoding.EncodeToString(differing))
+		_, err := jwk.ParseKey(jsonBytes)
+		require.Error(t, err, "raw std form must be rejected")
+		require.Contains(t, err.Error(), "base64url")
+	})
+
+	t.Run("Std with padding rejected", func(t *testing.T) {
+		differing := append([]byte{}, zBytes...)
+		differing[0] = 0xfb
+		jsonBytes := rebuild(base64.StdEncoding.EncodeToString(differing))
+		_, err := jwk.ParseKey(jsonBytes)
+		require.Error(t, err, "padded std form must be rejected")
+		require.Contains(t, err.Error(), "base64url")
 	})
 }
 
