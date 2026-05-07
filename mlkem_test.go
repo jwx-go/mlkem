@@ -313,10 +313,78 @@ func TestAlgVariantMismatch(t *testing.T) {
 	})
 
 	t.Run("matching alg still succeeds", func(t *testing.T) {
-		sealed, kemCT, err := enc.EncryptMLKEM(cek, "ML-KEM-768", "A256GCM")
+		_, kemCT, err := enc.EncryptMLKEM(cek, "ML-KEM-768", "A256GCM")
 		require.NoError(t, err)
-		_, err = dec.DecryptMLKEM(sealed, "ML-KEM-768", "A256GCM", kemCT)
+		// Direct-mode JWE encrypted_key is empty per spec (and per
+		// jwebb.IsDirectCEK in main jwx); pass nil sealedCEK to match
+		// the real wire shape.
+		_, err = dec.DecryptMLKEM(nil, "ML-KEM-768", "A256GCM", kemCT)
 		require.NoError(t, err)
+	})
+}
+
+// TestDirectModeRejectsNonEmptyEncryptedKey pins the contract that
+// direct-mode DecryptMLKEM rejects a non-empty sealedCEK (the JWE
+// "encrypted_key" field). Per draft-ietf-jose-pqc-kem, direct-mode
+// encrypted_key MUST be empty; main jwx already produces empty
+// encrypted_key for direct ML-KEM (gated by jwebb.IsDirectCEK), so
+// the regression case is a tampering proxy or buggy peer that
+// inserts bytes there. Without the guard, the bytes would be
+// silently discarded.
+func TestDirectModeRejectsNonEmptyEncryptedKey(t *testing.T) {
+	dk, err := mlkem.GenerateKey768()
+	require.NoError(t, err)
+
+	jkey, err := jwk.Import[jwk.Key](dk)
+	require.NoError(t, err)
+
+	enc, err := jwk.Export[jwebb.MLKEMKeyEncrypter](jkey)
+	require.NoError(t, err)
+	dec, err := jwk.Export[jwebb.MLKEMKeyDecrypter](jkey)
+	require.NoError(t, err)
+
+	cek := make([]byte, 32)
+	derivedCEK, kemCT, err := enc.EncryptMLKEM(cek, "ML-KEM-768", "A256GCM")
+	require.NoError(t, err)
+	require.NotEmpty(t, derivedCEK)
+	require.NotEmpty(t, kemCT)
+
+	t.Run("non-empty sealedCEK is rejected in direct mode", func(t *testing.T) {
+		_, err := dec.DecryptMLKEM([]byte("not-empty"), "ML-KEM-768", "A256GCM", kemCT)
+		require.Error(t, err, "direct alg must require empty encrypted_key")
+		require.Contains(t, err.Error(), "empty encrypted_key",
+			"error must name the spec violation")
+	})
+
+	t.Run("empty sealedCEK in direct mode succeeds", func(t *testing.T) {
+		recovered, err := dec.DecryptMLKEM(nil, "ML-KEM-768", "A256GCM", kemCT)
+		require.NoError(t, err)
+		require.Equal(t, derivedCEK, recovered,
+			"DecryptMLKEM in direct mode returns the KDF-derived CEK")
+	})
+
+	t.Run("zero-length non-nil sealedCEK in direct mode succeeds", func(t *testing.T) {
+		recovered, err := dec.DecryptMLKEM([]byte{}, "ML-KEM-768", "A256GCM", kemCT)
+		require.NoError(t, err)
+		require.Equal(t, derivedCEK, recovered)
+	})
+
+	t.Run("wrap-mode round-trip still accepts non-empty sealedCEK", func(t *testing.T) {
+		// Sanity-check the guard doesn't fire for +KW algs.
+		require.NoError(t, jkey.Set(jwk.AlgorithmKey, "ML-KEM-768+A192KW"))
+
+		encKW, err := jwk.Export[jwebb.MLKEMKeyEncrypter](jkey)
+		require.NoError(t, err)
+		decKW, err := jwk.Export[jwebb.MLKEMKeyDecrypter](jkey)
+		require.NoError(t, err)
+
+		sealed, kemCTKW, err := encKW.EncryptMLKEM(cek, "ML-KEM-768+A192KW", "A192GCM")
+		require.NoError(t, err)
+		require.NotEmpty(t, sealed, "wrap mode emits an AES-KW envelope, not empty")
+
+		recovered, err := decKW.DecryptMLKEM(sealed, "ML-KEM-768+A192KW", "A192GCM", kemCTKW)
+		require.NoError(t, err)
+		require.Equal(t, cek, recovered)
 	})
 }
 
