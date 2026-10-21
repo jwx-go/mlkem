@@ -1,6 +1,6 @@
 module github.com/jwx-go/mlkem/v4
 
-go 1.26.0
+go 1.26.10
 
 require (
 	github.com/lestrrat-go/jwx/v4 v4.5.0
